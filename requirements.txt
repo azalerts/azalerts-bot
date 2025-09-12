@@ -1,11 +1,9 @@
-Flask
-trafilatura
-sumy
-openai>=1.0.0
-http
 flask
 gunicorn
 openai
 requests
 beautifulsoup4
 python-dotenv
+trafilatura
+sumy
+httpx
