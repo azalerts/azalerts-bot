@@ -1,6 +1,11 @@
-<!doctype html>
-<html lang="nl">
-<head><meta charset="utf-8"><title>AZAlerts</title></head>
-<body><h1>AZAlerts werkt!</h1></body>
-</html>
+{% if error %}
+  <p class="error">{{ error }}</p>
+{% endif %}
 
+{% if result %}
+  <article>
+    <h2>{{ result.title }}</h2>
+    <p><strong>{{ result.lede }}</strong></p>
+    <div>{{ result.body }}</div>
+  </article>
+{% endif %}
