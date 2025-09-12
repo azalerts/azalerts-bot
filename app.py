@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -14,12 +15,10 @@ TEMPLATES_DIR = Path(app.template_folder or "templates")
 def _has_tpl(name: str) -> bool:
     return (TEMPLATES_DIR / name).is_file()
 
-# Gebruik jouw namen als ze bestaan, anders terugvallen op index.html
 FORM_TPL   = "az_form.html"   if _has_tpl("az_form.html")   else "index.html"
 RESULT_TPL = "az_result.html" if _has_tpl("az_result.html") else "index.html"
 
 def render_form(**ctx):
-    # Zorg altijd voor veilige defaults
     base = dict(error=None, used_openai=False, output_text=None, result=None)
     base.update(ctx or {})
     return render_template(FORM_TPL, **base)
@@ -71,6 +70,13 @@ def split_into_chunks(text: str, max_words: int = 900):
     for i in range(0, len(words), max_words):
         yield " ".join(words[i:i+max_words])
 
+def normalize_plaintext(s: str) -> str:
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = re.sub(r"<[^>]+>", "", s)               # HTML tags weghalen
+    s = re.sub(r"^[ \t]+", "", s, flags=re.M)   # leading spaces
+    s = re.sub(r"\n{3,}", "\n\n", s)            # teveel lege regels terug naar 1
+    return s.strip()
+
 # 1) Parafrase per chunk
 def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
     approx_tokens = min(int(len(chunk.split()) * 1.4), 2000)
@@ -94,31 +100,33 @@ def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
     )
     return (resp.choices[0].message.content or "").strip()
 
-# 2) Finale format-stap
+# 2) Finale format-stap met bloktekst en alinea's
 def format_article(client, full_text: str, brand_alias_str: str, approx_words: int) -> str:
     target_words = max(120, int(approx_words*0.9))
     prompt_user = (
-        "Zet de onderstaande tekst om naar een AZAlerts-waardig nieuwsartikel met deze eisen:\n"
-        "1) Bovenaan één titel, tussen ENKELE aanhalingstekens: '...'\n"
-        "2) Eerste zin = de hoofdboodschap. Plaats VROEG in die zin een bronvermelding in de lopende tekst, "
-        f"bijv. '..., zo meldt {brand_alias_str}.' of '..., schrijft {brand_alias_str}.'\n"
-        "3) Deel daarna op in korte alinea's: introductie (1 alinea) → kernpunten (1-3 alinea's) → context/achtergrond (1-2 alinea's).\n"
-        "4) Geen URL's, geen losse bronregel onderaan, geen reclame en geen speculatie.\n"
-        "5) Lengte: ongeveer gelijk aan de input (–10% tot +10%).\n"
-        "6) Alles in het Nederlands en uitsluitend feiten uit de input.\n\n"
-        f"Streef naar ~{target_words} woorden.\n\n"
-        "INPUT:\n" + full_text
+        "Zet de onderstaande tekst om naar een AZAlerts-waardig nieuwsartikel als PLATTE TEKST met ALLEEN alinea's."
+        "\n\nRegels:"
+        "\n1) Bovenaan één titel tussen ENKELE aanhalingstekens: '...'"
+        f"\n2) Eerste zin is de hoofdboodschap, met VROEGE bronvermelding in de lopende tekst, bijv. '..., zo meldt {brand_alias_str}.'"
+        "\n3) Daarna korte alinea's: intro (1) → kernpunten (1-3) → context/achtergrond (1-2)."
+        "\n4) GEEN opsommingstekens, GEEN Markdown, GEEN HTML, GEEN URL's, GEEN losse bronregel onderaan."
+        "\n5) Lengte: ongeveer gelijk aan de input (–10% tot +10%)."
+        "\n6) Volledig Nederlands en uitsluitend op basis van de input."
+        "\n7) Scheid alinea’s met precies ÉÉN lege regel."
+        f"\n\nStreef naar ~{target_words} woorden."
+        "\n\nINPUT:\n" + full_text
     )
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role":"system","content":"Je bent een ervaren Nederlandse nieuwsredacteur. Je houdt je strikt aan instructies en hallucineert niet."},
-            {"role":"user","content": prompt_user}
+            {"role": "system", "content": "Je bent een ervaren Nederlandse nieuwsredacteur. Schrijf platte tekst met alinea's, geen opmaak."},
+            {"role": "user", "content": prompt_user}
         ],
         temperature=0.2,
-        max_tokens=2500
+        max_tokens=2500,
     )
-    return (resp.choices[0].message.content or "").strip()
+    out = (resp.choices[0].message.content or "").strip()
+    return normalize_plaintext(out)
 
 # ---------------- routes ----------------
 @app.route("/", methods=["GET","POST"])
@@ -132,7 +140,7 @@ def index():
         try:
             downloaded = trafilatura.fetch_url(url)
             text = trafilatura.extract(downloaded) if downloaded else ""
-        except Exception as e:
+        except Exception:
             app.logger.exception("Trafilatura-fout")
             flash("Kon de tekst niet ophalen van deze URL.")
             return render_form()
@@ -146,7 +154,6 @@ def index():
 
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            # Op Render staat je key als environment variable – geen zshrc nodig
             flash("OPENAI_API_KEY ontbreekt (zet deze in Render → Environment).")
             return render_form()
 
@@ -154,35 +161,31 @@ def index():
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
 
-            # Parafrase in chunks (defensief, met fallback)
             chunks = list(split_into_chunks(text, max_words=1000))
             outputs = []
             for ch in chunks:
                 try:
                     outputs.append(paraphrase_chunk(client, ch, alias))
-                except Exception as e:
+                except Exception:
                     app.logger.exception("OpenAI-fout op chunk")
-                    outputs.append(ch)  # fallback: originele chunk
+                    outputs.append(ch)  # fallback
 
             merged = "\n\n".join(outputs).strip()
 
-            # Finale structuur
             try:
                 total_words = len(text.split())
                 final_text = format_article(client, merged, alias, approx_words=total_words)
             except Exception:
                 app.logger.exception("OpenAI format-fout")
-                final_text = merged  # fallback
+                final_text = merged
 
         except Exception:
             app.logger.exception("OpenAI client/init-fout")
             flash("Er ging iets mis bij het aanroepen van OpenAI.")
             return render_form()
 
-        # Geef zowel 'output_text' als 'result' door (compatibel met beide templates)
         return render_result(output_text=final_text, result={"body": final_text}, used_openai=True)
 
-    # GET
     return render_form()
 
 # ---------------- diagnostics ----------------
@@ -197,7 +200,6 @@ def debug_env():
 @app.errorhandler(500)
 def handle_500(err):
     app.logger.exception("Onverwachte 500")
-    # Toon nette pagina i.p.v. blanco 500
     return render_form(error="Er ging iets mis op de server."), 500
 
 # ---------------- local run ----------------
