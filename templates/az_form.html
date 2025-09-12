@@ -1,32 +1,37 @@
 <!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AZAlerts bot</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
-    <h1>AZAlerts</h1>
+    <div class="brand">
+      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
+      <span>AZAlerts</span>
+    </div>
   </header>
 
   <main class="container">
     {% with msgs = get_flashed_messages() %}
       {% if msgs %}
-        <div class="flash">
+        <div class="alert">
           {% for m in msgs %}<p>{{ m }}</p>{% endfor %}
         </div>
       {% endif %}
     {% endwith %}
 
-    <form action="/" method="post" class="card">
-      <label for="url">Artikel-URL</label>
-      <input type="url" id="url" name="url" placeholder="https://..." required>
-      <button type="submit">Parafraseer</button>
-    </form>
-
-    <p class="hint">Plak de link naar een artikel. We parafraseren dit naar een AZAlerts-stijl artikel.</p>
+    <section class="card">
+      <h2>Parafraseer artikel</h2>
+      <form action="/" method="post" class="stack">
+        <label for="url">Artikel-URL</label>
+        <input type="url" id="url" name="url" placeholder="https://…" required />
+        <button type="submit" class="btn">Parafraseer</button>
+      </form>
+      <p class="hint">We zetten de inhoud om naar een AZAlerts-stijl artikel (platte tekst, alinea’s, vroege bronvermelding).</p>
+    </section>
   </main>
 </body>
 </html>
