@@ -1,8 +1,87 @@
-body {
-  background: #fff;
-  color: #111;
-  font-family: Arial, sans-serif;
+:root{
+  --red:#d90429;
+  --red-600:#b80322;
+  --white:#ffffff;
+  --ink:#0f172a;
+  --muted:#f6f7f9;
+  --line:#e6e8ee;
 }
-h1 {
-  color: #d90429;
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  color:var(--ink);
+  background:var(--white);
+  font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji";
+}
+
+/* Top bar */
+.topbar{
+  position:sticky; top:0; z-index:10;
+  background:var(--red); color:var(--white);
+  padding:.8rem 1rem; box-shadow:0 1px 0 rgba(0,0,0,.06);
+}
+.topbar .brand{display:flex; align-items:center; gap:.75rem; font-weight:800; letter-spacing:.2px}
+.topbar .brand span{font-size:1.15rem}
+.topbar nav a{color:var(--white); text-decoration:none; font-weight:600}
+
+/* Layout */
+.container{max-width:860px; margin:1.25rem auto; padding:0 1rem}
+.card{
+  background:var(--muted);
+  border:1px solid var(--line);
+  border-radius:.8rem;
+  padding:1rem 1rem 1.1rem;
+  box-shadow:0 1px 0 #fff inset, 0 1px 2px rgba(16,24,40,.04);
+}
+.card-head{display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.5rem}
+.card h2{margin:.1rem 0; font-size:1.05rem}
+
+/* Form */
+.stack{display:grid; gap:.6rem}
+label{font-weight:600}
+input[type="url"]{
+  padding:.65rem .8rem;
+  border:2px solid var(--red);
+  border-radius:.5rem;
+  outline:none;
+}
+input[type="url"]:focus{border-color:var(--red-600);}
+
+/* Buttons */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  background:var(--red); color:var(--white);
+  border:0; border-radius:.5rem; padding:.55rem .9rem;
+  font-weight:700; cursor:pointer;
+}
+.btn:hover{background:var(--red-600)}
+.btn-ghost{
+  background:transparent; color:var(--red); border:1.5px solid var(--red);
+}
+.btn-ghost:hover{color:var(--white); background:var(--red)}
+
+/* Alerts & help */
+.alert{
+  background:#ffe8ea; border-left:4px solid var(--red); padding:.6rem .8rem;
+  border-radius:.4rem; margin-bottom:1rem;
+}
+.hint{opacity:.7; margin-top:.5rem}
+.backlink{margin:1rem 0}
+
+/* Result textarea = kopieerbaar blok */
+textarea{
+  width:100%;
+  min-height:360px;
+  resize:vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height:1.45;
+  border:2px solid var(--red);
+  border-radius:.6rem;
+  padding:.8rem .9rem;
+  background:#fff;
+  color:var(--ink);
+  /* belangrijk: behoud alinea’s en whitespace bij weergave */
+  white-space:pre-wrap;
 }
