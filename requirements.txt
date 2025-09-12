@@ -2,7 +2,7 @@ Flask
 trafilatura
 sumy
 openai>=1.0.0
-httpx
+http
 flask
 gunicorn
 openai
