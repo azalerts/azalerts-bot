@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <title>AZAlerts bot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
+    <h1>AZAlerts</h1>
+  </header>
+
+  <main class="container">
+    {% with msgs = get_flashed_messages() %}
+      {% if msgs %}
+        <div class="flash">
+          {% for m in msgs %}<p>{{ m }}</p>{% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <form action="/" method="post" class="card">
+      <label for="url">Artikel-URL</label>
+      <input type="url" id="url" name="url" placeholder="https://..." required>
+      <button type="submit">Parafraseer</button>
+    </form>
+
+    <p class="hint">Plak de link naar een artikel. We parafraseren dit naar een AZAlerts-stijl artikel.</p>
+  </main>
+</body>
+</html>
