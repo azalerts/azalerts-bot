@@ -1,34 +1,78 @@
 <!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Resultaat • AZAlerts</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
-    <h1>AZAlerts</h1>
+    <div class="brand">
+      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
+      <span>AZAlerts</span>
+    </div>
+    <nav><a href="/">Nieuwe URL</a></nav>
   </header>
 
   <main class="container">
     {% with msgs = get_flashed_messages() %}
       {% if msgs %}
-        <div class="flash">
+        <div class="alert">
           {% for m in msgs %}<p>{{ m }}</p>{% endfor %}
         </div>
       {% endif %}
     {% endwith %}
 
-    {% if output_text %}
-      <article class="card article">
-        {{ output_text | safe }}
-      </article>
-    {% else %}
-      <p>Geen output ontvangen.</p>
-    {% endif %}
+    <section class="card">
+      <div class="card-head">
+        <h2>Parafrase-resultaat</h2>
+        <div class="actions">
+          <button type="button" id="copyBtn" class="btn">Kopieer</button>
+          <button type="button" id="downloadBtn" class="btn btn-ghost">Download .txt</button>
+        </div>
+      </div>
 
-    <p><a href="/">← Nieuwe URL proberen</a></p>
+      <!-- Belangrijk: textarea voor 1-klik kopiëren.
+           Newlines blijven behouden; geen HTML of Markdown nodig. -->
+      <textarea id="resultBox" rows="22" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
+
+      <p class="hint">Tip: je kunt ook alles selecteren met ⌘A / Ctrl+A en kopiëren met ⌘C / Ctrl+C.</p>
+    </section>
+
+    <p class="backlink"><a href="/">← Parafraseer nog een artikel</a></p>
   </main>
+
+  <script>
+    (function () {
+      const box = document.getElementById('resultBox');
+      const copyBtn = document.getElementById('copyBtn');
+      const dlBtn = document.getElementById('downloadBtn');
+
+      copyBtn?.addEventListener('click', async () => {
+        box.select();
+        try {
+          await navigator.clipboard.writeText(box.value);
+          copyBtn.textContent = 'Gekopieerd!';
+        } catch (_) {
+          document.execCommand('copy'); // fallback
+          copyBtn.textContent = 'Gekopieerd!';
+        }
+        setTimeout(() => (copyBtn.textContent = 'Kopieer'), 1200);
+      });
+
+      dlBtn?.addEventListener('click', () => {
+        const blob = new Blob([box.value], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'azalerts.txt';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      });
+    })();
+  </script>
 </body>
 </html>
