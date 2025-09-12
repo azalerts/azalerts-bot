@@ -1,10 +1,33 @@
 import os
-from flask import Flask, render_template, request, flash
-import trafilatura
+from pathlib import Path
 from urllib.parse import urlparse
 
-app = Flask(__name__)
-app.secret_key = "dev"
+from flask import Flask, render_template, request, flash
+import trafilatura
+
+# ---------------- app & template setup ----------------
+app = Flask(__name__, template_folder="templates", static_folder="static")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev")
+
+TEMPLATES_DIR = Path(app.template_folder or "templates")
+
+def _has_tpl(name: str) -> bool:
+    return (TEMPLATES_DIR / name).is_file()
+
+# Gebruik jouw namen als ze bestaan, anders terugvallen op index.html
+FORM_TPL   = "az_form.html"   if _has_tpl("az_form.html")   else "index.html"
+RESULT_TPL = "az_result.html" if _has_tpl("az_result.html") else "index.html"
+
+def render_form(**ctx):
+    # Zorg altijd voor veilige defaults
+    base = dict(error=None, used_openai=False, output_text=None, result=None)
+    base.update(ctx or {})
+    return render_template(FORM_TPL, **base)
+
+def render_result(**ctx):
+    base = dict(error=None, used_openai=True, output_text=None, result=None)
+    base.update(ctx or {})
+    return render_template(RESULT_TPL, **base)
 
 # ---------------- helpers ----------------
 def source_brand_from_url(url: str) -> str:
@@ -35,10 +58,9 @@ def source_brand_from_url(url: str) -> str:
     return base.capitalize() if base else netloc
 
 def brand_alias(brand: str) -> str:
-    # Korte varianten die vaak in NL-kopij gebruikt worden
     aliases = {
         "Voetbal International": "VI",
-        "VoetbalPrimeur": "VoetbalPrimeur",   # soms 'VP', maar voluit is veilig
+        "VoetbalPrimeur": "VoetbalPrimeur",
         "RTL Nieuws": "RTL Nieuws",
         "De Telegraaf": "De Telegraaf",
     }
@@ -49,7 +71,7 @@ def split_into_chunks(text: str, max_words: int = 900):
     for i in range(0, len(words), max_words):
         yield " ".join(words[i:i+max_words])
 
-# 1) Parafrase per chunk (lengte ~ gelijk)
+# 1) Parafrase per chunk
 def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
     approx_tokens = min(int(len(chunk.split()) * 1.4), 2000)
     prompt_user = (
@@ -70,11 +92,11 @@ def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
         temperature=0.2,
         max_tokens=approx_tokens
     )
-    return resp.choices[0].message.content.strip()
+    return (resp.choices[0].message.content or "").strip()
 
-# 2) Finale format-stap: titel, eerste zin = hoofdboodschap + vroege bron, alinea-indeling
+# 2) Finale format-stap
 def format_article(client, full_text: str, brand_alias_str: str, approx_words: int) -> str:
-    target_words = max(120, int(approx_words*0.9))  # ondergrens en ± zelfde lengte
+    target_words = max(120, int(approx_words*0.9))
     prompt_user = (
         "Zet de onderstaande tekst om naar een AZAlerts-waardig nieuwsartikel met deze eisen:\n"
         "1) Bovenaan één titel, tussen ENKELE aanhalingstekens: '...'\n"
@@ -96,57 +118,89 @@ def format_article(client, full_text: str, brand_alias_str: str, approx_words: i
         temperature=0.2,
         max_tokens=2500
     )
-    return resp.choices[0].message.content.strip()
+    return (resp.choices[0].message.content or "").strip()
 
 # ---------------- routes ----------------
 @app.route("/", methods=["GET","POST"])
 def index():
     if request.method == "POST":
-        url = request.form.get("url","").strip()
+        url = (request.form.get("url") or "").strip()
         if not url:
             flash("Vul een URL in.")
-            return render_template("az_form.html")
+            return render_form()
 
-        downloaded = trafilatura.fetch_url(url)
-        text = trafilatura.extract(downloaded) if downloaded else ""
+        try:
+            downloaded = trafilatura.fetch_url(url)
+            text = trafilatura.extract(downloaded) if downloaded else ""
+        except Exception as e:
+            app.logger.exception("Trafilatura-fout")
+            flash("Kon de tekst niet ophalen van deze URL.")
+            return render_form()
+
         if not text or len(text.split()) < 50:
             flash("Te weinig tekst gevonden in dit artikel.")
-            return render_template("az_form.html")
+            return render_form()
 
         brand = source_brand_from_url(url)
         alias = brand_alias(brand)
+
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            flash("OPENAI_API_KEY ontbreekt. Zet je sleutel in ~/.zshrc en herstart de server.")
-            return render_template("az_form.html")
+            # Op Render staat je key als environment variable – geen zshrc nodig
+            flash("OPENAI_API_KEY ontbreekt (zet deze in Render → Environment).")
+            return render_form()
 
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-
-        # Parafrase in chunks om lengte/limieten te bewaken
-        chunks = list(split_into_chunks(text, max_words=1000))
-        outputs = []
-        for ch in chunks:
-            try:
-                outputs.append(paraphrase_chunk(client, ch, alias))
-            except Exception as e:
-                print("[OpenAI] Fout op chunk:", e)
-                outputs.append(ch)  # fallback: originele chunk
-
-        merged = "\n\n".join(outputs).strip()
-
-        # Finale format-stap: structuur + vroege bron + titel
         try:
-            total_words = len(text.split())
-            final_text = format_article(client, merged, alias, approx_words=total_words)
-        except Exception as e:
-            print("[OpenAI] Format-fout:", e)
-            final_text = merged  # fallback
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
 
-        return render_template("az_result.html", output_text=final_text, used_openai=True)
+            # Parafrase in chunks (defensief, met fallback)
+            chunks = list(split_into_chunks(text, max_words=1000))
+            outputs = []
+            for ch in chunks:
+                try:
+                    outputs.append(paraphrase_chunk(client, ch, alias))
+                except Exception as e:
+                    app.logger.exception("OpenAI-fout op chunk")
+                    outputs.append(ch)  # fallback: originele chunk
 
-    return render_template("az_form.html")
+            merged = "\n\n".join(outputs).strip()
 
+            # Finale structuur
+            try:
+                total_words = len(text.split())
+                final_text = format_article(client, merged, alias, approx_words=total_words)
+            except Exception:
+                app.logger.exception("OpenAI format-fout")
+                final_text = merged  # fallback
+
+        except Exception:
+            app.logger.exception("OpenAI client/init-fout")
+            flash("Er ging iets mis bij het aanroepen van OpenAI.")
+            return render_form()
+
+        # Geef zowel 'output_text' als 'result' door (compatibel met beide templates)
+        return render_result(output_text=final_text, result={"body": final_text}, used_openai=True)
+
+    # GET
+    return render_form()
+
+# ---------------- diagnostics ----------------
+@app.get("/health")
+def health():
+    return {"status": "ok"}, 200
+
+@app.get("/debug-env")
+def debug_env():
+    return {"OPENAI_API_KEY_present": bool(os.getenv("OPENAI_API_KEY"))}, 200
+
+@app.errorhandler(500)
+def handle_500(err):
+    app.logger.exception("Onverwachte 500")
+    # Toon nette pagina i.p.v. blanco 500
+    return render_form(error="Er ging iets mis op de server."), 500
+
+# ---------------- local run ----------------
 if __name__ == "__main__":
     print("[server] start op 127.0.0.1:8000 (1-pagina app)")
     app.run(debug=True, host="127.0.0.1", port=8000, use_reloader=False)
