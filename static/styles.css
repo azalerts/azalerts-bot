@@ -7,6 +7,9 @@
   --line:#e6e8ee;
 }
 
+/* Zorg dat [hidden] écht verbergt, óók als component display:* zet */
+[hidden]{display:none !important}
+
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
@@ -63,6 +66,7 @@ input[type="url"]:focus{border-color:var(--red-600);}
   font-weight:700; cursor:pointer;
 }
 .btn:hover{background:var(--red-600)}
+.btn[disabled]{opacity:.6; cursor:not-allowed}
 .btn-ghost{
   background:transparent; color:var(--red); border:1.5px solid var(--red);
 }
