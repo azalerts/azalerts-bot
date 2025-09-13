@@ -17,7 +17,7 @@
   <main class="container">
     {% with msgs = get_flashed_messages() %}
       {% if msgs %}
-        <div class="alert">
+        <div class="alert" role="status" aria-live="polite">
           {% for m in msgs %}<p>{{ m }}</p>{% endfor %}
         </div>
       {% endif %}
@@ -25,23 +25,23 @@
 
     <section class="card">
       <h2>Parafraseer artikel</h2>
-      <form action="/" method="post" class="stack">
+      <form action="/" method="post" class="stack" id="azForm">
         <label for="url">Artikel-URL</label>
         <input type="url" id="url" name="url" placeholder="https://…" required />
-        <button type="submit" class="btn">Parafraseer</button>
+        <button type="submit" class="btn" id="submitBtn">Parafraseer</button>
       </form>
       <p class="hint">We zetten de inhoud om naar een AZAlerts-stijl artikel (platte tekst, alinea’s, vroege bronvermelding).</p>
     </section>
   </main>
 
   <!-- Loading overlay -->
-  <div id="loadingOverlay" class="loading-overlay" hidden>
-    <div class="loading-card">
+  <div id="loadingOverlay" class="loading-overlay" hidden aria-hidden="true">
+    <div class="loading-card" role="dialog" aria-modal="true" aria-label="Bezig met parafraseren">
       <div class="loading-row">
         <span class="ball" aria-hidden="true">⚽</span>
         <strong>Bezig met parafraseren…</strong>
       </div>
-      <div class="progress">
+      <div class="progress" aria-label="Voortgang">
         <div class="progress-bar" id="progressBar" style="width:0%"></div>
       </div>
       <p class="small-note">Dit kan eventjes duren. We zetten het artikel om naar AZAlerts-stijl.</p>
@@ -49,27 +49,56 @@
   </div>
 
   <script>
-    // Toon overlay en laat een vriendelijke voortgangsbalk oplopen.
     (function () {
-      const form = document.querySelector('form[action="/"][method="post"]');
+      const form    = document.getElementById('azForm');
+      const btn     = document.getElementById('submitBtn');
       const overlay = document.getElementById('loadingOverlay');
-      const bar = document.getElementById('progressBar');
-      if (!form || !overlay || !bar) return;
+      const bar     = document.getElementById('progressBar');
 
-      form.addEventListener('submit', function () {
-        const btn = form.querySelector('button[type="submit"]');
-        if (btn) { btn.disabled = true; btn.textContent = 'Bezig…'; }
+      let timer = null;
+      let p = 0;
+
+      // Zorg dat bij élke pageload de overlay onzichtbaar is en progress 0
+      document.addEventListener('DOMContentLoaded', () => {
+        if (overlay) overlay.hidden = true;
+        if (bar) bar.style.width = '0%';
+        if (btn) { btn.disabled = false; btn.textContent = 'Parafraseer'; }
+      });
+
+      // Alleen bij submit tonen we de overlay en starten we de "nep" progress
+      form?.addEventListener('submit', () => {
+        if (!overlay || !bar) return;
+
+        // Verberg eventuele oude staat en reset
         overlay.hidden = false;
+        overlay.setAttribute('aria-hidden', 'false');
+        p = 0;
+        bar.style.width = '0%';
 
-        let p = 0;
-        const timer = setInterval(() => {
-          const step = p < 60 ? 2.5 : (p < 80 ? 1.2 : 0.4);
+        if (btn) { btn.disabled = true; btn.textContent = 'Bezig…'; }
+
+        // Vriendelijke progress: sneller tot 60%, dan afremmen tot 90%.
+        timer = setInterval(() => {
+          const step = p < 60 ? 2.5 : (p < 80 ? 1.2 : 0.5);
           p = Math.min(p + step, 90);
           bar.style.width = p + '%';
         }, 120);
-
-        window.addEventListener('beforeunload', () => clearInterval(timer));
       }, { passive: true });
+
+      // Als de pagina gaat navigeren (server response), timer stoppen
+      window.addEventListener('pagehide', () => { if (timer) clearInterval(timer); });
+      window.addEventListener('beforeunload', () => { if (timer) clearInterval(timer); });
+
+      // Extra veiligheid: als we om wat voor reden dan ook op dezelfde pagina blijven,
+      // verberg overlay na 3 minuten om "blijft hangen"-gevoel te voorkomen.
+      setTimeout(() => {
+        if (!document.hidden && overlay && !overlay.hidden) {
+          if (timer) clearInterval(timer);
+          overlay.hidden = true;
+          overlay.setAttribute('aria-hidden', 'true');
+          if (btn) { btn.disabled = false; btn.textContent = 'Parafraseer'; }
+        }
+      }, 180000);
     })();
   </script>
 </body>
