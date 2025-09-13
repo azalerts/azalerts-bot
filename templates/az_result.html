@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Resultaat • AZAlerts</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    .article { max-width: 760px; margin: 1rem auto; }
+    .article h1 { font-size: 1.6rem; line-height: 1.3; margin: 0 0 .6rem; }
+    .article p { line-height: 1.6; margin: .6rem 0; }
+    .article ul { margin: .4rem 0 .8rem 1.1rem; }
+    .muted { color: #666; font-size: .95rem; }
+    .tools { display:flex; gap:.5rem; align-items:center; }
+    .tools .btn { padding:.5rem .7rem; border-radius:8px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+    .toast { position: fixed; right: 12px; bottom: 12px; padding:.6rem .8rem; border-radius:10px; background:#111; color:#fff; opacity:0; transition: opacity .2s ease; }
+    .toast.show { opacity: 1; }
+    textarea#resultBox { width:100%; min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
 </head>
 <body>
   <header class="topbar">
@@ -27,37 +39,70 @@
     <section class="card">
       <div class="card-head">
         <h2>Parafrase-resultaat</h2>
-        <div class="actions">
+        <div class="tools">
           <button type="button" id="copyBtn" class="btn">Kopieer</button>
-          <button type="button" id="downloadBtn" class="btn btn-ghost">Download .txt</button>
+          <button type="button" id="downloadBtn" class="btn">Download .txt</button>
         </div>
       </div>
 
-      <!-- Kopieerbaar blok met behoud van alinea's -->
-      <textarea id="resultBox" rows="22" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
+      {% if result and result.title %}
+        <article class="article">
+          <h1>{{ result.title }}</h1>
 
-      <p class="hint">Tip: selecteer alles met ⌘A / Ctrl+A en kopieer met ⌘C / Ctrl+C.</p>
+          {% if result.intro %}
+            <p><strong>{{ result.intro }}</strong></p>
+          {% endif %}
+
+          {% if result.bullets and result.bullets|length > 0 %}
+            <ul>
+              {% for b in result.bullets %}
+                <li>{{ b }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          {% if result.body_paragraphs and result.body_paragraphs|length > 0 %}
+            {% for para in result.body_paragraphs %}
+              <p>{{ para }}</p>
+            {% endfor %}
+          {% endif %}
+
+          {% if result.attribution_required and result.attribution_line %}
+            <p class="muted">{{ result.attribution_line }}</p>
+          {% endif %}
+        </article>
+      {% endif %}
+
+      <!-- Kopieerbaar blok (altijd beschikbaar) -->
+      <label for="resultBox" class="muted">Kopieerbare tekst</label>
+      <textarea id="resultBox" rows="14" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
     </section>
 
     <p class="backlink"><a href="/">← Parafraseer nog een artikel</a></p>
   </main>
+
+  <div id="toast" class="toast">Gekopieerd ✓</div>
 
   <script>
     (function(){
       const box = document.getElementById('resultBox');
       const copyBtn = document.getElementById('copyBtn');
       const dlBtn = document.getElementById('downloadBtn');
+      const toast = document.getElementById('toast');
+
+      function showToast() {
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 1200);
+      }
 
       copyBtn?.addEventListener('click', async () => {
         box.select();
         try {
           await navigator.clipboard.writeText(box.value);
-          copyBtn.textContent = 'Gekopieerd!';
         } catch (_) {
           document.execCommand('copy'); // fallback
-          copyBtn.textContent = 'Gekopieerd!';
         }
-        setTimeout(() => (copyBtn.textContent = 'Kopieer'), 1200);
+        showToast();
       });
 
       dlBtn?.addEventListener('click', () => {
