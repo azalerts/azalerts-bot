@@ -99,6 +99,27 @@ def needs_attribution(source_title: str, source_text: str) -> bool:
     if any(k in s for k in factual_signals):  return False
     return False
 
+def ensure_alias_in_first_paragraph(result: dict, alias: str) -> dict:
+    """
+    Als attributie vereist is, zorg dat alias (bv 'VI') expliciet in de eerste alinea voorkomt.
+    Als het ontbreekt, voeg aan het eind van alinea 1 een korte verwijzing toe.
+    """
+    if not result or not result.get("attribution_required"):
+        return result
+    paras = result.get("body_paragraphs") or []
+    if not paras:
+        return result
+    first = paras[0]
+    # staat alias er al in?
+    if re.search(rf"\b{re.escape(alias)}\b", first, flags=re.I):
+        return result
+    # subtiel toevoegen
+    sep = "" if first.endswith((".", "!", "?")) else "."
+    first = first.strip() + (sep if sep else "") + f" Volgens {alias}."
+    paras[0] = first
+    result["body_paragraphs"] = paras
+    return result
+
 # ---------------- single-pass: title + body (geen bullets) ----------------
 def format_article_structured(client, source_title: str, source_text: str, source_name: str, source_url: str):
     """
@@ -123,7 +144,7 @@ Geef ALLEEN valide JSON terug, exact in dit schema:
 
 {{
   "title": "string (AZ als onderwerp; één regel; score met AZ eerst indien van toepassing)",
-  "body_paragraphs": ["string", "string", "string"], 
+  "body_paragraphs": ["string", "string", "string"],
   "attribution_required": true/false,
   "attribution_line": "string of lege string"
 }}
@@ -140,7 +161,8 @@ Regels:
 - Beslis of bronvermelding nodig is:
   - JA bij transfer/geruchten, interviews/quotes of meningen/columns.
   - NEE bij wedstrijdverslag/stand/programmering/droge feiten.
-- Bij attributie: verwerk bron kort IN de eerste alinea en zet in "attribution_line" exact: "Bron: {brand_alias_str} – {source_url}"
+- Bij attributie: noem de bron EXPLICIET in de EERSTE alinea (bijv. '..., aldus {brand_alias_str}' of 'Volgens {brand_alias_str} ...')
+  én zet in "attribution_line": "Bron: {brand_alias_str} – {source_url}".
 - Bij geen attributie: laat "attribution_line" leeg en zet "attribution_required": false.
 - Streef naar ~{target_words} woorden in de body.
 
@@ -225,6 +247,10 @@ def index():
                 source_url=url
             )
 
+            # Zorg dat alias in alinea 1 staat als attributie nodig is
+            alias = brand_alias(source_name)
+            result = ensure_alias_in_first_paragraph(result, alias)
+
             # Samengestelde platte tekst (alleen body + optionele bronregel)
             paragraphs = result.get("body_paragraphs") or []
             output_text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
@@ -236,7 +262,7 @@ def index():
             flash("Er ging iets mis bij het genereren van de tekst.")
             return render_form()
 
-        # Result bevat title + body_paragraphs; template toont titel en 1 kopieerblok
+        # Result bevat title + body_paragraphs; template toont titelblok (copy) en 1 tekstblok (copy)
         return render_result(output_text=output_text, result=result, used_openai=True)
 
     return render_form()
@@ -257,5 +283,5 @@ def handle_500(err):
 
 # ---------------- local run ----------------
 if __name__ == "__main__":
-    print("[server] start op 127.0.0.1:8000 (titel + 1 kopieerblok, geen bullets)")
+    print("[server] start op 127.0.0.1:8000 (titel + 1 kopieerblok, alias-fix, animatie via form-template)")
     app.run(debug=True, host="127.0.0.1", port=8000, use_reloader=False)
