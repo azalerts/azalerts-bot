@@ -6,13 +6,18 @@
   <title>Resultaat • AZAlerts</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <style>
-    .container { max-width: 760px; margin: 1.2rem auto; padding: 0 1rem; }
-    .tools { display:flex; gap:.5rem; align-items:center; margin-bottom:.5rem; }
-    .btn { padding:.55rem .8rem; border-radius:10px; border:1px solid #cfcfcf; background:#fff; cursor:pointer; font-weight:600; }
-    .btn:focus { outline: 2px solid #e10600; outline-offset: 1px; }
-    .titlecard, .card { background:#fff; border:1px solid #eee; border-radius:12px; padding: .9rem 1rem; margin-bottom: .9rem; }
-    textarea { width:100%; min-height: 130px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; line-height:1.5; }
-    .hint { color:#666; font-size:.95rem; }
+    :root{
+      --az-red:#e10600; --az-dark:#0c0c0d; --az-gray:#f6f7f9; --az-border:#e7e8ea;
+      --radius:14px;
+    }
+    body{background:var(--az-gray); color:var(--az-dark);}
+    .container { max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+    .panel{ background:#fff; border:1px solid var(--az-border); border-radius:var(--radius); padding:1rem 1.2rem; box-shadow:0 1px 2px rgba(0,0,0,.04);}
+    .tools { display:flex; gap:.5rem; align-items:center; margin-bottom:.6rem; }
+    .btn { padding:.6rem .9rem; border-radius:12px; border:1px solid var(--az-border); background:#fff; cursor:pointer; font-weight:650; }
+    .btn:focus { outline:2px solid var(--az-red); outline-offset:1px; }
+    textarea { width:100%; min-height: 130px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; line-height:1.55; }
+    .hint { color:#5f6368; font-size:.95rem; }
   </style>
 </head>
 <body>
@@ -27,14 +32,14 @@
   <main class="container">
     {% with msgs = get_flashed_messages() %}
       {% if msgs %}
-        <div class="alert">
-          {% for m in msgs %}<p>{{ m }}</p>{% endfor %}
-        </div>
+        <div class="panel" style="border-left:4px solid var(--az-red);"><div>
+          {% for m in msgs %}<p style="margin:.3rem 0;">{{ m }}</p>{% endfor %}
+        </div></div>
       {% endif %}
     {% endwith %}
 
     {% if result and result.title %}
-      <section class="titlecard">
+      <section class="panel" style="margin-bottom:.9rem;">
         <div class="tools">
           <button type="button" id="copyTitleBtn" class="btn">Kopieer titel</button>
         </div>
@@ -42,13 +47,13 @@
       </section>
     {% endif %}
 
-    <section class="card">
+    <section class="panel">
       <div class="tools">
         <button type="button" id="copyTextBtn" class="btn">Kopieer tekst</button>
       </div>
       <textarea id="resultBox" rows="18" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
-      <p class="hint">Tip: selecteer alles met ⌘A / Ctrl+A en kopieer met ⌘C / Ctrl+C.</p>
-      <p class="hint"><a href="/">← Parafraseer nog een artikel</a></p>
+      <p class="hint" style="margin-top:.6rem;">Tip: selecteer alles met ⌘A / Ctrl+A en kopieer met ⌘C / Ctrl+C.</p>
+      <p class="hint" style="margin-top:.2rem;"><a href="/">← Parafraseer nog een artikel</a></p>
     </section>
   </main>
 
