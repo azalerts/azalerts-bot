@@ -77,16 +77,56 @@ def normalize_plaintext(s: str) -> str:
     s = re.sub(r"\n{3,}", "\n\n", s)            # teveel lege regels terug naar 1
     return s.strip()
 
-# 1) Parafrase per chunk
+def needs_attribution(source_title: str, source_text: str) -> bool:
+    """
+    Heuristiek: True als het gaat om transfernieuws/gerucht/interview/quote/mening.
+    False bij wedstrijdverslag/stand/programmering/'droge' feiten.
+    """
+    s = f"{source_title}\n{source_text}".lower()
+
+    # Signalen voor interviews/quotes/mening
+    quote_signals = [
+        "zegt ", "aldus ", "vertelt ", "verklaart ", "volgens ", "laat weten",
+        "in gesprek met", "tegenover", "citeert", "interview", "column", "opinie",
+        "‘", "’", "“", "”", "\""
+    ]
+
+    # Signalen voor transfers/geruchten
+    transfer_signals = [
+        "transfer", "gerucht", "in gesprek met", "interesse in", "in de belangstelling",
+        "bod", "bieding", "akkoord", "persoonlijk akkoord", "medische keuring",
+        "tekent", "contract", "huurdeal", "gehuurd", "clausule", "transfersom",
+        "overstap", "komt over van", "gaat naar"
+    ]
+
+    # Signalen voor 'droge' feiten (als tegengas)
+    factual_signals = [
+        "eindigt in", "speelschema", "programma", "speelronde", "stand ",
+        "ranglijst", "samenvatting", "wedstrijdverslag", "score", "uitslag",
+        "verslaat", "wint", "verliest", "gelijk", "1-0", "2-1", "3-2", "0-0"
+    ]
+
+    # Als duidelijke transfer/quote-signalen → attributie
+    if any(k in s for k in transfer_signals):
+        return True
+    if any(k in s for k in quote_signals):
+        return True
+
+    # Als het vooral feitelijk wedstrijdgerelateerd is → geen attributie
+    if any(k in s for k in factual_signals):
+        return False
+
+    # Default: geen attributie (conservatief)
+    return False
+
+# 1) Parafrase per chunk (neutraal en feitelijk houden)
 def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
     approx_tokens = min(int(len(chunk.split()) * 1.4), 2000)
     prompt_user = (
         "Parafraseer de onderstaande tekst in het Nederlands, behoud alle feiten en nuance, "
         "en houd de lengte ongeveer gelijk aan de input (±10%). "
         "Schrijf in een neutrale, nieuwswaardige toon. "
-        "Verwerk eventueel een korte bronzin in de lopende tekst wanneer logisch, "
-        f"bijv. '..., zo meldt {brand_alias_str}.' "
-        "Voeg geen URL's toe en geen losse bronregel.\n\n"
+        "Gebruik geen URL's en geen losse bronregel.\n\n"
         "TEKST:\n" + chunk
     )
     resp = client.chat.completions.create(
@@ -100,26 +140,54 @@ def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
     )
     return (resp.choices[0].message.content or "").strip()
 
-# 2) Finale format-stap met bloktekst en alinea's
-def format_article(client, full_text: str, brand_alias_str: str, approx_words: int) -> str:
-    target_words = max(120, int(approx_words*0.9))
+# 2) Finale format-stap met AZ-perspectief en conditionele bron
+def format_article(client, full_text: str, brand_alias_str: str, approx_words: int, attribution_required: bool) -> str:
+    target_words = max(120, int(approx_words * 0.9))
+
+    # Instructies afhankelijk van bronvermelding
+    if attribution_required:
+        attribution_rule = (
+            f"- Verwerk vroeg in de EERSTE alinea een korte bronvermelding in de lopende tekst "
+            f"(bijv. '..., aldus {brand_alias_str}.'). "
+            f"Gebruik GEEN losse bronregel onderaan."
+        )
+    else:
+        attribution_rule = (
+            "- Neem GEEN bronvermelding op (geen merknamen, geen 'volgens ...', geen losse bronregel)."
+        )
+
     prompt_user = (
-        "Zet de onderstaande tekst om naar een AZAlerts-waardig nieuwsartikel als PLATTE TEKST met ALLEEN alinea's."
-        "\n\nRegels:"
-        "\n1) Bovenaan één titel tussen ENKELE aanhalingstekens: '...'"
-        f"\n2) Eerste zin is de hoofdboodschap, met VROEGE bronvermelding in de lopende tekst, bijv. '..., zo meldt {brand_alias_str}.'"
-        "\n3) Daarna korte alinea's: intro (1) → kernpunten (1-3) → context/achtergrond (1-2)."
-        "\n4) GEEN opsommingstekens, GEEN Markdown, GEEN HTML, GEEN URL's, GEEN losse bronregel onderaan."
-        "\n5) Lengte: ongeveer gelijk aan de input (–10% tot +10%)."
-        "\n6) Volledig Nederlands en uitsluitend op basis van de input."
-        "\n7) Scheid alinea’s met precies ÉÉN lege regel."
-        f"\n\nStreef naar ~{target_words} woorden."
-        "\n\nINPUT:\n" + full_text
+        "Zet de onderstaande tekst om naar een AZAlerts-waardig nieuwsartikel als PLATTE TEKST met ALLEEN alinea's.\n\n"
+        "Regels:\n"
+        "- Schrijf ALTIJD vanuit AZ-perspectief: AZ is het onderwerp of de focus.\n"
+        "- Pas de titel aan naar AZ-perspectief. Voorbeelden:\n"
+        "  Bron: 'PSV verliest van AZ' → Titel: 'AZ wint van PSV'.\n"
+        "  Bron: 'PSV – AZ eindigt in 1-1' → Titel: 'AZ speelt gelijk tegen PSV (1-1)'.\n"
+        "  Bron: 'AZ verliest van PSV' → Titel blijft feitelijk: 'AZ verliest van PSV'.\n"
+        "- Noteer een eventuele score met AZ eerst (bijv. 'AZ 2–1 PSV').\n"
+        "- Korte, duidelijke zinnen (B1/B2); geen sensatie, geen uitroeptekens.\n"
+        "- Gebruik GEEN aanhalingstekens rondom de titel.\n"
+        "- Citeer alleen echte uitspraken in de lopende tekst, met spreker.\n"
+        f"{attribution_rule}\n"
+        "- GEEN opsommingstekens, GEEN Markdown, GEEN HTML, GEEN URL's.\n"
+        "- Scheid alinea’s met precies ÉÉN lege regel.\n"
+        "- Opbouw: 1) Titel (één regel). 2) Eerste alinea = hoofdboodschap (AZ-perspectief). "
+        "3) Daarna korte alinea’s met kern en context.\n"
+        f"\nStreef naar ~{target_words} woorden.\n"
+        "\nINPUT:\n" + full_text
     )
+
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Je bent een ervaren Nederlandse nieuwsredacteur. Schrijf platte tekst met alinea's, geen opmaak."},
+            {
+                "role": "system",
+                "content": (
+                    "Je bent AZAlerts, een Nederlandse sportnieuwsredacteur. "
+                    "Schrijf altijd vanuit AZ-perspectief en blijf feitelijk correct. "
+                    "Gebruik platte tekst met alinea’s, geen opmaak."
+                ),
+            },
             {"role": "user", "content": prompt_user}
         ],
         temperature=0.2,
@@ -161,6 +229,7 @@ def index():
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
 
+            # 1) Chunk-parafrase (neutraal)
             chunks = list(split_into_chunks(text, max_words=1000))
             outputs = []
             for ch in chunks:
@@ -172,9 +241,22 @@ def index():
 
             merged = "\n\n".join(outputs).strip()
 
+            # 2) Heuristiek: wel/geen bron afhankelijk van type artikel
+            try:
+                attribution_required = needs_attribution(source_title="", source_text=text)
+            except Exception:
+                attribution_required = False
+
+            # 3) Finale format: AZ-perspectief + conditionele bron
             try:
                 total_words = len(text.split())
-                final_text = format_article(client, merged, alias, approx_words=total_words)
+                final_text = format_article(
+                    client,
+                    merged,
+                    alias,
+                    approx_words=total_words,
+                    attribution_required=attribution_required
+                )
             except Exception:
                 app.logger.exception("OpenAI format-fout")
                 final_text = merged
