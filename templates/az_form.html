@@ -3,102 +3,108 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AZAlerts bot</title>
+  <title>AZAlerts • Parafraseer</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    .container { max-width: 760px; margin: 1.5rem auto; padding: 0 1rem; }
+    .field { margin: .8rem 0; }
+    label { display:block; margin-bottom:.3rem; font-weight:600; }
+    input[type=url] { width:100%; padding:.7rem .8rem; border:1px solid #ddd; border-radius:10px; }
+    .btn { padding:.65rem 1rem; border-radius:10px; border:1px solid #cfcfcf; background:#fff; cursor:pointer; font-weight:600; }
+    .btn-primary { background:#e10600; color:#fff; border-color:#e10600; }
+    .hint { color:#666; font-size:.95rem; }
+
+    /* Overlay + progress */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(255,255,255,.9);
+      display: none; align-items: center; justify-content: center; z-index: 9999;
+      text-align:center; padding: 1rem;
+    }
+    .ball { font-size: 42px; margin-bottom: 12px; }
+    .progress { width: 360px; max-width: 86vw; height: 10px; background: #eee; border-radius: 999px; overflow: hidden; margin: 0 auto; }
+    .progress-fill { height: 100%; width: 0%; background: #e10600; transition: width .25s ease; }
+    .muted { color:#666; font-size:.95rem; margin-top:.5rem; }
+  </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" class="brand-logo" />
-      <span>AZAlerts</span>
-    </div>
-  </header>
-
   <main class="container">
     {% with msgs = get_flashed_messages() %}
       {% if msgs %}
-        <div class="alert" role="status" aria-live="polite">
+        <div class="alert">
           {% for m in msgs %}<p>{{ m }}</p>{% endfor %}
         </div>
       {% endif %}
     {% endwith %}
 
-    <section class="card">
-      <h2>Parafraseer artikel</h2>
-      <form action="/" method="post" class="stack" id="azForm">
+    <h1>AZAlerts</h1>
+    <p class="hint">Plak een artikel-URL. We parafraseren het stuk in AZ-perspectief.</p>
+
+    <form id="azForm" method="post" action="/">
+      <div class="field">
         <label for="url">Artikel-URL</label>
-        <input type="url" id="url" name="url" placeholder="https://…" required />
-        <button type="submit" class="btn" id="submitBtn">Parafraseer</button>
-      </form>
-      <p class="hint">We zetten de inhoud om naar een AZAlerts-stijl artikel (platte tekst, alinea’s, vroege bronvermelding).</p>
-    </section>
+        <input type="url" id="url" name="url" placeholder="https://..." required>
+      </div>
+      <button class="btn btn-primary" type="submit">Parafraseer</button>
+    </form>
   </main>
 
-  <!-- Loading overlay -->
-  <div id="loadingOverlay" class="loading-overlay" hidden aria-hidden="true">
-    <div class="loading-card" role="dialog" aria-modal="true" aria-label="Bezig met parafraseren">
-      <div class="loading-row">
-        <span class="ball" aria-hidden="true">⚽</span>
-        <strong>Bezig met parafraseren…</strong>
-      </div>
-      <div class="progress" aria-label="Voortgang">
-        <div class="progress-bar" id="progressBar" style="width:0%"></div>
-      </div>
-      <p class="small-note">Dit kan eventjes duren. We zetten het artikel om naar AZAlerts-stijl.</p>
+  <!-- Laad-overlay met voortgang -->
+  <div id="overlay" class="overlay" aria-hidden="true">
+    <div>
+      <div class="ball">⚽</div>
+      <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+      <div class="muted" id="progressLabel" style="margin-top:.6rem;">Bezig met parafraseren…</div>
     </div>
   </div>
 
   <script>
-    (function () {
-      const form    = document.getElementById('azForm');
-      const btn     = document.getElementById('submitBtn');
-      const overlay = document.getElementById('loadingOverlay');
-      const bar     = document.getElementById('progressBar');
+    (function(){
+      const form = document.getElementById('azForm');
+      const overlay = document.getElementById('overlay');
+      const bar = document.getElementById('progressFill');
+      const label = document.getElementById('progressLabel');
 
-      let timer = null;
-      let p = 0;
+      let timer = null, pct = 0, running = false;
 
-      // Zorg dat bij élke pageload de overlay onzichtbaar is en progress 0
-      document.addEventListener('DOMContentLoaded', () => {
-        if (overlay) overlay.hidden = true;
-        if (bar) bar.style.width = '0%';
-        if (btn) { btn.disabled = false; btn.textContent = 'Parafraseer'; }
+      function showOverlay() {
+        overlay.style.display = 'flex';
+        overlay.setAttribute('aria-hidden', 'false');
+      }
+      function hideOverlay() {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+      }
+      function startProgress() {
+        pct = 10; // start niet op 0
+        bar.style.width = pct + '%';
+        running = true;
+        timer = setInterval(() => {
+          // kleine stapjes tot 90%
+          if (pct < 90) {
+            pct += (Math.random() * 6) + 2; // 2–8%
+            if (pct > 90) pct = 90;
+            bar.style.width = pct.toFixed(0) + '%';
+          }
+        }, 350);
+      }
+      function finishProgress() {
+        if (!running) return;
+        clearInterval(timer);
+        bar.style.width = '100%';
+        running = false;
+      }
+
+      // Form submit → overlay aan + progress simulatie
+      form?.addEventListener('submit', () => {
+        showOverlay();
+        startProgress();
       });
 
-      // Alleen bij submit tonen we de overlay en starten we de "nep" progress
-      form?.addEventListener('submit', () => {
-        if (!overlay || !bar) return;
+      // Wanneer de nieuwe pagina is geladen (resultaat), is deze scriptcontext weg.
+      // Voor SPA-like navigatie (als je blijft op dezelfde pagina) zou je hier nog 'pageshow' kunnen afvangen.
 
-        // Verberg eventuele oude staat en reset
-        overlay.hidden = false;
-        overlay.setAttribute('aria-hidden', 'false');
-        p = 0;
-        bar.style.width = '0%';
-
-        if (btn) { btn.disabled = true; btn.textContent = 'Bezig…'; }
-
-        // Vriendelijke progress: sneller tot 60%, dan afremmen tot 90%.
-        timer = setInterval(() => {
-          const step = p < 60 ? 2.5 : (p < 80 ? 1.2 : 0.5);
-          p = Math.min(p + step, 90);
-          bar.style.width = p + '%';
-        }, 120);
-      }, { passive: true });
-
-      // Als de pagina gaat navigeren (server response), timer stoppen
-      window.addEventListener('pagehide', () => { if (timer) clearInterval(timer); });
-      window.addEventListener('beforeunload', () => { if (timer) clearInterval(timer); });
-
-      // Extra veiligheid: als we om wat voor reden dan ook op dezelfde pagina blijven,
-      // verberg overlay na 3 minuten om "blijft hangen"-gevoel te voorkomen.
-      setTimeout(() => {
-        if (!document.hidden && overlay && !overlay.hidden) {
-          if (timer) clearInterval(timer);
-          overlay.hidden = true;
-          overlay.setAttribute('aria-hidden', 'true');
-          if (btn) { btn.disabled = false; btn.textContent = 'Parafraseer'; }
-        }
-      }, 180000);
+      // Zorg dat overlay verborgen is bij eerste load
+      hideOverlay();
     })();
   </script>
 </body>
