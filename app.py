@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,7 +17,7 @@ def _has_tpl(name: str) -> bool:
     return (TEMPLATES_DIR / name).is_file()
 
 FORM_TPL   = "az_form.html"   if _has_tpl("az_form.html")   else "index.html"
-RESULT_TPL = "az_result.html" if _has_tpl("az_result.html") else "index.html"
+RESULT_TPL = "az_result.html" if _has_tpl("az_result.html") else "az_result.html"
 
 def render_form(**ctx):
     base = dict(error=None, used_openai=False, output_text=None, result=None)
@@ -30,6 +31,7 @@ def render_result(**ctx):
 
 # ---------------- helpers ----------------
 def source_brand_from_url(url: str) -> str:
+    from urllib.parse import urlparse
     netloc = urlparse(url).netloc.lower().replace("www.","")
     mapping = {
         "vi.nl": "Voetbal International",
@@ -65,136 +67,138 @@ def brand_alias(brand: str) -> str:
     }
     return aliases.get(brand, brand)
 
-def split_into_chunks(text: str, max_words: int = 900):
+def split_into_chunks(text: str, max_words: int = 1200):
     words = text.split()
     for i in range(0, len(words), max_words):
         yield " ".join(words[i:i+max_words])
 
 def normalize_plaintext(s: str) -> str:
     s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = re.sub(r"<[^>]+>", "", s)               # HTML tags weghalen
+    s = re.sub(r"<[^>]+>", "", s)               # HTML weghalen
     s = re.sub(r"^[ \t]+", "", s, flags=re.M)   # leading spaces
-    s = re.sub(r"\n{3,}", "\n\n", s)            # teveel lege regels terug naar 1
+    s = re.sub(r"\n{3,}", "\n\n", s)            # teveel lege regels → 1
     return s.strip()
 
 def needs_attribution(source_title: str, source_text: str) -> bool:
     """
-    Heuristiek: True als het gaat om transfernieuws/gerucht/interview/quote/mening.
-    False bij wedstrijdverslag/stand/programmering/'droge' feiten.
+    True voor transfer/gerucht/interview/quote/mening; False voor wedstrijdverslag/stand/programmering/droge feiten.
     """
     s = f"{source_title}\n{source_text}".lower()
 
-    # Signalen voor interviews/quotes/mening
     quote_signals = [
         "zegt ", "aldus ", "vertelt ", "verklaart ", "volgens ", "laat weten",
         "in gesprek met", "tegenover", "citeert", "interview", "column", "opinie",
         "‘", "’", "“", "”", "\""
     ]
-
-    # Signalen voor transfers/geruchten
     transfer_signals = [
-        "transfer", "gerucht", "in gesprek met", "interesse in", "in de belangstelling",
+        "transfer", "gerucht", "interesse in", "in de belangstelling",
         "bod", "bieding", "akkoord", "persoonlijk akkoord", "medische keuring",
         "tekent", "contract", "huurdeal", "gehuurd", "clausule", "transfersom",
         "overstap", "komt over van", "gaat naar"
     ]
-
-    # Signalen voor 'droge' feiten (als tegengas)
     factual_signals = [
         "eindigt in", "speelschema", "programma", "speelronde", "stand ",
         "ranglijst", "samenvatting", "wedstrijdverslag", "score", "uitslag",
         "verslaat", "wint", "verliest", "gelijk", "1-0", "2-1", "3-2", "0-0"
     ]
-
-    # Als duidelijke transfer/quote-signalen → attributie
-    if any(k in s for k in transfer_signals):
-        return True
-    if any(k in s for k in quote_signals):
-        return True
-
-    # Als het vooral feitelijk wedstrijdgerelateerd is → geen attributie
-    if any(k in s for k in factual_signals):
-        return False
-
-    # Default: geen attributie (conservatief)
+    if any(k in s for k in transfer_signals): return True
+    if any(k in s for k in quote_signals):    return True
+    if any(k in s for k in factual_signals):  return False
     return False
 
-# 1) Parafrase per chunk (neutraal en feitelijk houden)
-def paraphrase_chunk(client, chunk: str, brand_alias_str: str) -> str:
-    approx_tokens = min(int(len(chunk.split()) * 1.4), 2000)
-    prompt_user = (
-        "Parafraseer de onderstaande tekst in het Nederlands, behoud alle feiten en nuance, "
-        "en houd de lengte ongeveer gelijk aan de input (±10%). "
-        "Schrijf in een neutrale, nieuwswaardige toon. "
-        "Gebruik geen URL's en geen losse bronregel.\n\n"
-        "TEKST:\n" + chunk
-    )
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role":"system","content":"Je bent een redacteur die complete, feitelijke Nederlandstalige nieuwsartikelen schrijft zonder sensatie."},
-            {"role":"user","content": prompt_user}
-        ],
-        temperature=0.2,
-        max_tokens=approx_tokens
-    )
-    return (resp.choices[0].message.content or "").strip()
-
-# 2) Finale format-stap met AZ-perspectief en conditionele bron
-def format_article(client, full_text: str, brand_alias_str: str, approx_words: int, attribution_required: bool) -> str:
+# ---------------- single-pass: direct structured output ----------------
+def format_article_structured(client, source_title: str, source_text: str, source_name: str, source_url: str):
+    """
+    Eén LLM-call die:
+    - AZ-perspectief afdwingt (titel en tekst)
+    - besluit of attributie nodig is
+    - gestructureerde JSON-velden teruggeeft
+    """
+    approx_words = len(source_text.split())
     target_words = max(120, int(approx_words * 0.9))
+    brand_alias_str = brand_alias(source_name)
+    attribution_required_hint = needs_attribution(source_title, source_text)
 
-    # Instructies afhankelijk van bronvermelding
-    if attribution_required:
-        attribution_rule = (
-            f"- Verwerk vroeg in de EERSTE alinea een korte bronvermelding in de lopende tekst "
-            f"(bijv. '..., aldus {brand_alias_str}.'). "
-            f"Gebruik GEEN losse bronregel onderaan."
-        )
-    else:
-        attribution_rule = (
-            "- Neem GEEN bronvermelding op (geen merknamen, geen 'volgens ...', geen losse bronregel)."
-        )
-
-    prompt_user = (
-        "Zet de onderstaande tekst om naar een AZAlerts-waardig nieuwsartikel als PLATTE TEKST met ALLEEN alinea's.\n\n"
-        "Regels:\n"
-        "- Schrijf ALTIJD vanuit AZ-perspectief: AZ is het onderwerp of de focus.\n"
-        "- Pas de titel aan naar AZ-perspectief. Voorbeelden:\n"
-        "  Bron: 'PSV verliest van AZ' → Titel: 'AZ wint van PSV'.\n"
-        "  Bron: 'PSV – AZ eindigt in 1-1' → Titel: 'AZ speelt gelijk tegen PSV (1-1)'.\n"
-        "  Bron: 'AZ verliest van PSV' → Titel blijft feitelijk: 'AZ verliest van PSV'.\n"
-        "- Noteer een eventuele score met AZ eerst (bijv. 'AZ 2–1 PSV').\n"
-        "- Korte, duidelijke zinnen (B1/B2); geen sensatie, geen uitroeptekens.\n"
-        "- Gebruik GEEN aanhalingstekens rondom de titel.\n"
-        "- Citeer alleen echte uitspraken in de lopende tekst, met spreker.\n"
-        f"{attribution_rule}\n"
-        "- GEEN opsommingstekens, GEEN Markdown, GEEN HTML, GEEN URL's.\n"
-        "- Scheid alinea’s met precies ÉÉN lege regel.\n"
-        "- Opbouw: 1) Titel (één regel). 2) Eerste alinea = hoofdboodschap (AZ-perspectief). "
-        "3) Daarna korte alinea’s met kern en context.\n"
-        f"\nStreef naar ~{target_words} woorden.\n"
-        "\nINPUT:\n" + full_text
+    system_msg = (
+        "Je bent AZAlerts, een Nederlandse sportnieuwsredacteur. "
+        "Schrijf altijd vanuit AZ-perspectief en blijf feitelijk correct. "
+        "Gebruik B1/B2-zinnen, geen sensatie, geen uitroeptekens. "
+        "Noteer een score met AZ eerst (bijv. 'AZ 2–1 PSV'). "
+        "Titel zonder aanhalingstekens."
     )
+
+    # We vragen expliciet om JSON. (Geen tool-calls nodig; we parsen de string.)
+    user_msg = f"""
+Geef ALLEEN valide JSON terug, exact in dit schema:
+
+{{
+  "title": "string (AZ als onderwerp; één regel; score met AZ eerst indien van toepassing)",
+  "intro": "string (2–3 korte zinnen, samenvatting vanuit AZ)",
+  "bullets": ["string", "string", "string"],
+  "body_paragraphs": ["string", "string", "string"],
+  "attribution_required": true/false,
+  "attribution_line": "string of lege string"
+}}
+
+Regels:
+- Schrijf ALTIJD vanuit AZ-perspectief: AZ is onderwerp/focus.
+- Pas de titel aan naar AZ-perspectief. Voorbeelden:
+  - Bron: "PSV verliest van AZ" → Titel: "AZ wint van PSV".
+  - Bron: "PSV – AZ eindigt in 1-1" → Titel: "AZ speelt gelijk tegen PSV (1-1)".
+  - Bron: "AZ verliest van PSV" → Titel blijft feitelijk: "AZ verliest van PSV".
+- GEEN aanhalingstekens rondom de titel (alleen echte citaten in de tekst).
+- GEEN URL's in tekst.
+- Bullets: 3–5 korte punten.
+- body_paragraphs: 3–6 alinea’s, korte zinnen, logisch opgebouwd.
+- Beslis of bronvermelding nodig is:
+  - JA bij transfer/geruchten, interviews/quotes of meningen/columns.
+  - NEE bij wedstrijdverslag/stand/programmering/droge feiten.
+- Bij attributie: verwerk een korte bronvermelding IN de tekst (niet als losse regel) en zet in "attribution_line" exact: "Bron: {brand_alias_str} – {source_url}"
+- Bij geen attributie: laat "attribution_line" leeg en zet "attribution_required": false.
+- Streef naar ~{target_words} woorden in de body.
+
+INVOER
+SOURCE_TITLE: {source_title}
+SOURCE_NAME: {source_name}
+SOURCE_URL:  {source_url}
+
+SOURCE_TEXT:
+{source_text}
+
+HINT (mag je negeren als het niet klopt): attribution_required = {str(attribution_required_hint).lower()}
+"""
 
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Je bent AZAlerts, een Nederlandse sportnieuwsredacteur. "
-                    "Schrijf altijd vanuit AZ-perspectief en blijf feitelijk correct. "
-                    "Gebruik platte tekst met alinea’s, geen opmaak."
-                ),
-            },
-            {"role": "user", "content": prompt_user}
+            {"role":"system","content": system_msg},
+            {"role":"user","content": user_msg}
         ],
         temperature=0.2,
-        max_tokens=2500,
+        max_tokens=2400
     )
-    out = (resp.choices[0].message.content or "").strip()
-    return normalize_plaintext(out)
+    raw = (resp.choices[0].message.content or "").strip()
+
+    # Probeer JSON te parsen; bij fout → simpele fallback
+    try:
+        data = json.loads(raw)
+        # minimale sanity
+        for k in ["title","intro","bullets","body_paragraphs","attribution_required","attribution_line"]:
+            if k not in data: raise ValueError("key missing: "+k)
+        if not isinstance(data.get("bullets"), list): raise ValueError("bullets not list")
+        if not isinstance(data.get("body_paragraphs"), list): raise ValueError("body_paragraphs not list")
+    except Exception:
+        # Fallback: alles in 1 tekstblok, zodat de site blijft werken
+        fallback_text = normalize_plaintext(raw)
+        data = {
+            "title": source_title or "AZ-update",
+            "intro": "",
+            "bullets": [],
+            "body_paragraphs": [fallback_text] if fallback_text else [],
+            "attribution_required": False,
+            "attribution_line": ""
+        }
+    return data
 
 # ---------------- routes ----------------
 @app.route("/", methods=["GET","POST"])
@@ -217,8 +221,8 @@ def index():
             flash("Te weinig tekst gevonden in dit artikel.")
             return render_form()
 
-        brand = source_brand_from_url(url)
-        alias = brand_alias(brand)
+        source_name = source_brand_from_url(url)
+        alias = brand_alias(source_name)
 
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
@@ -229,44 +233,33 @@ def index():
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
 
-            # 1) Chunk-parafrase (neutraal)
-            chunks = list(split_into_chunks(text, max_words=1000))
-            outputs = []
-            for ch in chunks:
-                try:
-                    outputs.append(paraphrase_chunk(client, ch, alias))
-                except Exception:
-                    app.logger.exception("OpenAI-fout op chunk")
-                    outputs.append(ch)  # fallback
+            # SINGLE-PASS: direct structured output (minder tokens dan 2-pass)
+            result = format_article_structured(
+                client=client,
+                source_title="",
+                source_text=text,
+                source_name=source_name,
+                source_url=url
+            )
 
-            merged = "\n\n".join(outputs).strip()
-
-            # 2) Heuristiek: wel/geen bron afhankelijk van type artikel
-            try:
-                attribution_required = needs_attribution(source_title="", source_text=text)
-            except Exception:
-                attribution_required = False
-
-            # 3) Finale format: AZ-perspectief + conditionele bron
-            try:
-                total_words = len(text.split())
-                final_text = format_article(
-                    client,
-                    merged,
-                    alias,
-                    approx_words=total_words,
-                    attribution_required=attribution_required
-                )
-            except Exception:
-                app.logger.exception("OpenAI format-fout")
-                final_text = merged
+            # Bouw ook een plain-text voor de Kopieer/Download-knop (samengesteld)
+            pieces = []
+            if result.get("title"): pieces.append(result["title"])
+            if result.get("intro"): pieces.append(result["intro"])
+            if result.get("bullets"):
+                pieces.append("\n".join(f"• {b}" for b in result["bullets"]))
+            if result.get("body_paragraphs"):
+                pieces.extend(result["body_paragraphs"])
+            if result.get("attribution_required") and result.get("attribution_line"):
+                pieces.append(result["attribution_line"])
+            output_text = "\n\n".join([p for p in pieces if p]).strip()
 
         except Exception:
-            app.logger.exception("OpenAI client/init-fout")
-            flash("Er ging iets mis bij het aanroepen van OpenAI.")
+            app.logger.exception("OpenAI client/format-fout")
+            flash("Er ging iets mis bij het genereren van de tekst.")
             return render_form()
 
-        return render_result(output_text=final_text, result={"body": final_text}, used_openai=True)
+        return render_result(output_text=output_text, result=result, used_openai=True)
 
     return render_form()
 
@@ -286,5 +279,5 @@ def handle_500(err):
 
 # ---------------- local run ----------------
 if __name__ == "__main__":
-    print("[server] start op 127.0.0.1:8000 (1-pagina app)")
+    print("[server] start op 127.0.0.1:8000 (1-pagina app, structured output)")
     app.run(debug=True, host="127.0.0.1", port=8000, use_reloader=False)
