@@ -9,7 +9,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
+      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" class="brand-logo" />
       <span>AZAlerts</span>
     </div>
   </header>
@@ -33,5 +33,44 @@
       <p class="hint">We zetten de inhoud om naar een AZAlerts-stijl artikel (platte tekst, alinea’s, vroege bronvermelding).</p>
     </section>
   </main>
+
+  <!-- Loading overlay -->
+  <div id="loadingOverlay" class="loading-overlay" hidden>
+    <div class="loading-card">
+      <div class="loading-row">
+        <span class="ball" aria-hidden="true">⚽</span>
+        <strong>Bezig met parafraseren…</strong>
+      </div>
+      <div class="progress">
+        <div class="progress-bar" id="progressBar" style="width:0%"></div>
+      </div>
+      <p class="small-note">Dit kan eventjes duren. We zetten het artikel om naar AZAlerts-stijl.</p>
+    </div>
+  </div>
+
+  <script>
+    // Toon overlay en laat een vriendelijke voortgangsbalk oplopen.
+    (function () {
+      const form = document.querySelector('form[action="/"][method="post"]');
+      const overlay = document.getElementById('loadingOverlay');
+      const bar = document.getElementById('progressBar');
+      if (!form || !overlay || !bar) return;
+
+      form.addEventListener('submit', function () {
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn) { btn.disabled = true; btn.textContent = 'Bezig…'; }
+        overlay.hidden = false;
+
+        let p = 0;
+        const timer = setInterval(() => {
+          const step = p < 60 ? 2.5 : (p < 80 ? 1.2 : 0.4);
+          p = Math.min(p + step, 90);
+          bar.style.width = p + '%';
+        }, 120);
+
+        window.addEventListener('beforeunload', () => clearInterval(timer));
+      }, { passive: true });
+    })();
+  </script>
 </body>
 </html>
