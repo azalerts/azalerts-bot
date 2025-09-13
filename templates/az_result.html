@@ -6,14 +6,13 @@
   <title>Resultaat • AZAlerts</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <style>
-    .titlecard { max-width: 760px; margin: 1rem auto .5rem; padding: .9rem 1rem; border:1px solid #eee; border-radius:12px; background:#fff; }
-    .titlecard h1 { margin:0; font-size:1.4rem; line-height:1.35; }
-    .card { max-width: 760px; margin: .5rem auto 1.2rem; }
+    .container { max-width: 760px; margin: 1.2rem auto; padding: 0 1rem; }
     .tools { display:flex; gap:.5rem; align-items:center; margin-bottom:.5rem; }
-    .btn { padding:.5rem .7rem; border-radius:8px; border:1px solid #ddd; background:#fff; cursor:pointer; }
-    textarea#resultBox { width:100%; min-height: 340px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; line-height:1.5; }
-    .toast { position: fixed; right: 12px; bottom: 12px; padding:.6rem .8rem; border-radius:10px; background:#111; color:#fff; opacity:0; transition: opacity .2s ease; }
-    .toast.show { opacity: 1; }
+    .btn { padding:.55rem .8rem; border-radius:10px; border:1px solid #cfcfcf; background:#fff; cursor:pointer; font-weight:600; }
+    .btn:focus { outline: 2px solid #e10600; outline-offset: 1px; }
+    .titlecard, .card { background:#fff; border:1px solid #eee; border-radius:12px; padding: .9rem 1rem; margin-bottom: .9rem; }
+    textarea { width:100%; min-height: 130px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; line-height:1.5; }
+    .hint { color:#666; font-size:.95rem; }
   </style>
 </head>
 <body>
@@ -36,56 +35,38 @@
 
     {% if result and result.title %}
       <section class="titlecard">
-        <h1>{{ result.title }}</h1>
+        <div class="tools">
+          <button type="button" id="copyTitleBtn" class="btn">Kopieer titel</button>
+        </div>
+        <textarea id="titleBox" rows="2" aria-label="Titel">{{ result.title }}</textarea>
       </section>
     {% endif %}
 
     <section class="card">
       <div class="tools">
-        <button type="button" id="copyBtn" class="btn">Kopieer</button>
-        <button type="button" id="downloadBtn" class="btn">Download .txt</button>
+        <button type="button" id="copyTextBtn" class="btn">Kopieer tekst</button>
       </div>
-
-      <!-- Eén kopieerbaar blok met ALLE tekst (geen bullets) -->
-      <textarea id="resultBox" rows="16" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
-
+      <textarea id="resultBox" rows="18" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
       <p class="hint">Tip: selecteer alles met ⌘A / Ctrl+A en kopieer met ⌘C / Ctrl+C.</p>
-      <p class="backlink"><a href="/">← Parafraseer nog een artikel</a></p>
+      <p class="hint"><a href="/">← Parafraseer nog een artikel</a></p>
     </section>
   </main>
 
-  <div id="toast" class="toast">Gekopieerd ✓</div>
-
   <script>
     (function(){
-      const box = document.getElementById('resultBox');
-      const copyBtn = document.getElementById('copyBtn');
-      const dlBtn = document.getElementById('downloadBtn');
-      const toast = document.getElementById('toast');
+      const titleBox = document.getElementById('titleBox');
+      const copyTitleBtn = document.getElementById('copyTitleBtn');
+      const textBox = document.getElementById('resultBox');
+      const copyTextBtn = document.getElementById('copyTextBtn');
 
-      function showToast() {
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 1200);
+      async function copyEl(el) {
+        el.select();
+        try { await navigator.clipboard.writeText(el.value); }
+        catch(_) { document.execCommand('copy'); }
       }
 
-      copyBtn?.addEventListener('click', async () => {
-        box.select();
-        try { await navigator.clipboard.writeText(box.value); }
-        catch(_) { document.execCommand('copy'); }
-        showToast();
-      });
-
-      dlBtn?.addEventListener('click', () => {
-        const blob = new Blob([box.value], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'azalerts.txt';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      });
+      copyTitleBtn?.addEventListener('click', () => copyEl(titleBox));
+      copyTextBtn?.addEventListener('click', () => copyEl(textBox));
     })();
   </script>
 </body>
