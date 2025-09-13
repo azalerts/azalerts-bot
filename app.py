@@ -99,24 +99,54 @@ def needs_attribution(source_title: str, source_text: str) -> bool:
     if any(k in s for k in factual_signals):  return False
     return False
 
-def ensure_alias_in_first_paragraph(result: dict, alias: str) -> dict:
+def _has_quotes(text: str) -> bool:
+    return bool(re.search(r"[\"“”‘’'›‹«»].+[\"“”‘’'›‹«»]", text))
+
+def _first_sentence_split(p: str):
+    m = re.search(r"([.!?])(\s|$)", p)
+    if not m:
+        return p, "", ""
+    end = m.end(1)  # include the punctuation
+    return p[:end], p[end:], p[m.group(1)]
+
+def ensure_alias_in_first_paragraph(result: dict, alias: str, source_text: str) -> dict:
     """
-    Als attributie vereist is, zorg dat alias (bv 'VI') expliciet in de eerste alinea voorkomt.
-    Als het ontbreekt, voeg aan het eind van alinea 1 een korte verwijzing toe.
+    Als attributie vereist is, zorg dat alias (bv 'VI') vloeiend in de 1e alinea staat:
+    - Bij quotes/interview: voeg ', in gesprek met VI,' toe vóór de punt.
+    - Anders: voeg ', zo meldt VI.' toe vóór de punt.
     """
     if not result or not result.get("attribution_required"):
         return result
     paras = result.get("body_paragraphs") or []
     if not paras:
         return result
+
     first = paras[0]
-    # staat alias er al in?
+    # Als alias al aanwezig is, niets doen
     if re.search(rf"\b{re.escape(alias)}\b", first, flags=re.I):
         return result
-    # subtiel toevoegen
-    sep = "" if first.endswith((".", "!", "?")) else "."
-    first = first.strip() + (sep if sep else "") + f" Volgens {alias}."
-    paras[0] = first
+
+    sent, tail, punct = _first_sentence_split(first.strip())
+    if not sent:  # geen punt gevonden
+        sent = first.strip()
+        tail = ""
+        punct = "."
+
+    if _has_quotes(source_text) or re.search(r"\b(zegt|aldus|verklaart|vertelt|tegenover|in gesprek met)\b", source_text, flags=re.I):
+        # interview/quotes
+        # Vermijd dubbele komma: voeg netjes in voor de eindpunt
+        if sent.endswith(","):
+            new_first = f"{sent} in gesprek met {alias}{punct}{tail}"
+        else:
+            new_first = f"{sent[:-1]}, in gesprek met {alias}{punct}{tail}" if sent.endswith(punct) else f"{sent}, in gesprek met {alias}{punct}{tail}"
+    else:
+        # verslag/feit
+        if sent.endswith(","):
+            new_first = f"{sent} zo meldt {alias}{punct}{tail}"
+        else:
+            new_first = f"{sent[:-1]}, zo meldt {alias}{punct}{tail}" if sent.endswith(punct) else f"{sent}, zo meldt {alias}{punct}{tail}"
+
+    paras[0] = new_first.strip()
     result["body_paragraphs"] = paras
     return result
 
@@ -127,7 +157,8 @@ def format_article_structured(client, source_title: str, source_text: str, sourc
     { title, body_paragraphs[], attribution_required, attribution_line }
     """
     approx_words = len(source_text.split())
-    target_words = max(120, int(approx_words * 0.9))
+    # iets beknopter, minder alinea's
+    target_words = max(120, int(approx_words * 0.8))
     brand_alias_str = brand_alias(source_name)
     attribution_required_hint = needs_attribution(source_title, source_text)
 
@@ -144,7 +175,7 @@ Geef ALLEEN valide JSON terug, exact in dit schema:
 
 {{
   "title": "string (AZ als onderwerp; één regel; score met AZ eerst indien van toepassing)",
-  "body_paragraphs": ["string", "string", "string"],
+  "body_paragraphs": ["string", "string"], 
   "attribution_required": true/false,
   "attribution_line": "string of lege string"
 }}
@@ -155,16 +186,18 @@ Regels:
   - Bron: "PSV verliest van AZ" → "AZ wint van PSV".
   - Bron: "PSV – AZ eindigt in 1-1" → "AZ speelt gelijk tegen PSV (1-1)".
   - Bron: "AZ verliest van PSV" → "AZ verliest van PSV" (feiten blijven feiten).
-- GEEN aanhalingstekens rondom de titel (alleen echte citaten in de tekst).
-- GEEN bullets, GEEN URL's in de tekst.
-- body_paragraphs: 4–7 korte alinea’s, logisch opgebouwd (intro → kern → context).
+- GEEN aanhalingstekens rondom de titel.
+- body_paragraphs: 2–4 compacte alinea’s (intro → kern → context).
+- Als de bron tekstuele citaten bevat, neem dan MINIMAAL één relevante quote op als echte citaatregel
+  met spreker, bijvoorbeeld: “<quote>,” zei Maarten Martens tegen {brand_alias_str}.
 - Beslis of bronvermelding nodig is:
   - JA bij transfer/geruchten, interviews/quotes of meningen/columns.
   - NEE bij wedstrijdverslag/stand/programmering/droge feiten.
-- Bij attributie: noem de bron EXPLICIET in de EERSTE alinea (bijv. '..., aldus {brand_alias_str}' of 'Volgens {brand_alias_str} ...')
+- Bij attributie: verwerk de bron natuurlijk in de EERSTE alinea (bijv. "…, in gesprek met {brand_alias_str}" of "…, zo meldt {brand_alias_str}").
   én zet in "attribution_line": "Bron: {brand_alias_str} – {source_url}".
 - Bij geen attributie: laat "attribution_line" leeg en zet "attribution_required": false.
-- Streef naar ~{target_words} woorden in de body.
+- Geen URL's in de tekst.
+- Streef naar ~{target_words} woorden in totaal.
 
 INVOER
 SOURCE_TITLE: {source_title}
@@ -228,6 +261,7 @@ def index():
             return render_form()
 
         source_name = source_brand_from_url(url)
+        alias = brand_alias(source_name)
 
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
@@ -238,7 +272,7 @@ def index():
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
 
-            # Single pass: title + body (geen bullets)
+            # Single pass: title + body
             result = format_article_structured(
                 client=client,
                 source_title="",
@@ -247,11 +281,10 @@ def index():
                 source_url=url
             )
 
-            # Zorg dat alias in alinea 1 staat als attributie nodig is
-            alias = brand_alias(source_name)
-            result = ensure_alias_in_first_paragraph(result, alias)
+            # Zorg dat alias vloeiend in alinea 1 staat (geen 'Volgens VI.' los)
+            result = ensure_alias_in_first_paragraph(result, alias, text)
 
-            # Samengestelde platte tekst (alleen body + optionele bronregel)
+            # Samengestelde platte tekst (body + optionele bronregel)
             paragraphs = result.get("body_paragraphs") or []
             output_text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
             if result.get("attribution_required") and result.get("attribution_line"):
@@ -262,7 +295,6 @@ def index():
             flash("Er ging iets mis bij het genereren van de tekst.")
             return render_form()
 
-        # Result bevat title + body_paragraphs; template toont titelblok (copy) en 1 tekstblok (copy)
         return render_result(output_text=output_text, result=result, used_openai=True)
 
     return render_form()
@@ -283,5 +315,5 @@ def handle_500(err):
 
 # ---------------- local run ----------------
 if __name__ == "__main__":
-    print("[server] start op 127.0.0.1:8000 (titel + 1 kopieerblok, alias-fix, animatie via form-template)")
+    print("[server] start op 127.0.0.1:8000 (AZAlerts strakker: quotes + bron, 2–4 alinea’s)")
     app.run(debug=True, host="127.0.0.1", port=8000, use_reloader=False)
