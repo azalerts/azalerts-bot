@@ -9,7 +9,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" height="40" />
+      <img src="{{ url_for('static', filename='img/azalerts-logo.png') }}" alt="AZAlerts" class="brand-logo" />
       <span>AZAlerts</span>
     </div>
     <nav><a href="/">Nieuwe URL</a></nav>
@@ -33,8 +33,7 @@
         </div>
       </div>
 
-      <!-- Belangrijk: textarea voor 1-klik kopiëren.
-           Newlines blijven behouden; geen HTML of Markdown nodig. -->
+      <!-- Kopieerbaar blok met behoud van alinea's -->
       <textarea id="resultBox" rows="22" aria-label="Parafraseerde tekst">{{ output_text }}</textarea>
 
       <p class="hint">Tip: je kunt ook alles selecteren met ⌘A / Ctrl+A en kopiëren met ⌘C / Ctrl+C.</p>
@@ -44,7 +43,7 @@
   </main>
 
   <script>
-    (function () {
+    (function(){
       const box = document.getElementById('resultBox');
       const copyBtn = document.getElementById('copyBtn');
       const dlBtn = document.getElementById('downloadBtn');
